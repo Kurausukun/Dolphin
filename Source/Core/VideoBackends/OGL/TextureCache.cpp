@@ -388,12 +388,12 @@ void TextureCache::ConvertTexture(TCacheEntry* destination, TCacheEntry* source,
   s_palette_pixel_shader[format].Bind();
 
   // C14 textures are currently unsupported
-  int size = (source->format & 0xf) == GX_TF_I4 ? 32 : 512;
+  int size = (source->InMemoryFormat()) == GX_TF_I4 ? 32 : 512;
   auto buffer = s_palette_stream_buffer->Map(size);
   memcpy(buffer.first, palette, size);
   s_palette_stream_buffer->Unmap(size);
   glUniform1i(s_palette_buffer_offset_uniform[format], buffer.second / 2);
-  glUniform1f(s_palette_multiplier_uniform[format], (source->format & 0xf) == 0 ? 15.0f : 255.0f);
+  glUniform1f(s_palette_multiplier_uniform[format], (source->InMemoryFormat()) == 0 ? 15.0f : 255.0f);
   glUniform4f(s_palette_copy_position_uniform[format], 0.0f, 0.0f,
               static_cast<float>(source->GetWidth()), static_cast<float>(source->GetHeight()));
 

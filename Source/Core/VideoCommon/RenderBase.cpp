@@ -83,9 +83,6 @@ Renderer::Renderer(int backbuffer_width, int backbuffer_height)
     : m_backbuffer_width(backbuffer_width), m_backbuffer_height(backbuffer_height),
       m_last_efb_scale(g_ActiveConfig.iEFBScale)
 {
-  FramebufferManagerBase::SetLastXfbWidth(MAX_XFB_WIDTH);
-  FramebufferManagerBase::SetLastXfbHeight(MAX_XFB_HEIGHT);
-
   UpdateActiveConfig();
   UpdateDrawRectangle();
   CalculateTargetSize();
@@ -117,43 +114,16 @@ void Renderer::RenderToXFB(u32 xfbAddr, const EFBRectangle& sourceRc, u32 fbStri
     return;
 
   m_xfb_written = true;
-
-  if (g_ActiveConfig.bUseXFB)
-  {
-    FramebufferManagerBase::CopyToXFB(xfbAddr, fbStride, fbHeight, sourceRc, Gamma);
-  }
-  else
-  {
-    // The timing is not predictable here. So try to use the XFB path to dump frames.
-    u64 ticks = CoreTiming::GetTicks();
-
-    // below div two to convert from bytes to pixels - it expects width, not stride
-    Swap(xfbAddr, fbStride / 2, fbStride / 2, fbHeight, sourceRc, ticks, Gamma);
-  }
 }
 
 int Renderer::EFBToScaledX(int x) const
 {
-  switch (g_ActiveConfig.iEFBScale)
-  {
-  case SCALE_AUTO:  // fractional
-    return FramebufferManagerBase::ScaleToVirtualXfbWidth(x, m_target_rectangle);
-
-  default:
-    return x * (int)m_efb_scale_numeratorX / (int)m_efb_scale_denominatorX;
-  };
+  return x * (int)m_efb_scale_numeratorX / (int)m_efb_scale_denominatorX;
 }
 
 int Renderer::EFBToScaledY(int y) const
 {
-  switch (g_ActiveConfig.iEFBScale)
-  {
-  case SCALE_AUTO:  // fractional
-    return FramebufferManagerBase::ScaleToVirtualXfbHeight(y, m_target_rectangle);
-
-  default:
-    return y * (int)m_efb_scale_numeratorY / (int)m_efb_scale_denominatorY;
-  };
+  return y * (int)m_efb_scale_numeratorY / (int)m_efb_scale_denominatorY;
 }
 
 float Renderer::EFBToScaledXf(float x) const
@@ -195,9 +165,8 @@ bool Renderer::CalculateTargetSize()
   {
   case SCALE_AUTO:
   case SCALE_AUTO_INTEGRAL:
-    new_efb_width = FramebufferManagerBase::ScaleToVirtualXfbWidth(EFB_WIDTH, m_target_rectangle);
-    new_efb_height =
-        FramebufferManagerBase::ScaleToVirtualXfbHeight(EFB_HEIGHT, m_target_rectangle);
+    new_efb_width = m_target_width;
+    new_efb_height = m_target_height;
 
     if (m_last_efb_scale == SCALE_AUTO_INTEGRAL)
     {
@@ -513,9 +482,7 @@ TargetRectangle Renderer::CalculateFrameDumpDrawRectangle() const
   rc.top = 0;
 
   // If full-resolution frame dumping is disabled, just use the window draw rectangle.
-  // Also do this if RealXFB is enabled, since the image has been downscaled for the XFB copy
-  // anyway, and there's no point writing an upscaled frame with no filtering.
-  if (!g_ActiveConfig.bInternalResolutionFrameDumps || g_ActiveConfig.RealXFBEnabled())
+  if (!g_ActiveConfig.bInternalResolutionFrameDumps)
   {
     // But still remove the borders, since the caller expects this.
     rc.right = m_target_rectangle.GetWidth();
@@ -742,8 +709,19 @@ void Renderer::Swap(u32 xfbAddr, u32 fbWidth, u32 fbStride, u32 fbHeight, const 
       m_aspect_wide = flush_count_anamorphic > 0.75 * flush_total;
   }
 
-  // TODO: merge more generic parts into VideoCommon
-  SwapImpl(xfbAddr, fbWidth, fbStride, fbHeight, rc, ticks, Gamma);
+  if (xfbAddr && fbWidth && fbStride && fbHeight)
+  {
+    static const int force_safe_texture_cache_hash = 0;
+    // Get the current XFB from texture cache
+    auto* xfb_entry = g_texture_cache->GetTexture(xfbAddr, fbWidth, fbHeight, GX_CTF_XFB,
+                                                  force_safe_texture_cache_hash);
+    
+    // TODO, check if xfb_entry is a duplicate of the previous frame and skip SwapImpl
+
+
+    // TODO: merge more generic parts into VideoCommon
+    g_renderer->SwapImpl(xfb_entry->texture.get(), rc, ticks, Gamma);
+  }
 
   if (m_xfb_written)
     m_fps_counter.Update();

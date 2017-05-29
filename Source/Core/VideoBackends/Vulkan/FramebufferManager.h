@@ -181,8 +181,6 @@ public:
   ~XFBSource();
 
   VKTexture* GetTexture() const;
-  // Guest -> GPU EFB Textures
-  void DecodeToTexture(u32 xfb_addr, u32 fb_width, u32 fb_height) override;
 
   // Used for virtual XFB
   void CopyEFB(float gamma) override;
