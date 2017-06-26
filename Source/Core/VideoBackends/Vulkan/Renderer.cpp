@@ -561,31 +561,6 @@ void Renderer::TransitionBuffersForSwap(const TargetRectangle& scaled_rect,
 {
   VkCommandBuffer command_buffer = g_command_buffer_mgr->GetCurrentCommandBuffer();
 
-  if (!g_ActiveConfig.bUseXFB)
-  {
-    // Drawing EFB direct.
-    if (g_ActiveConfig.iMultisamples > 1)
-    {
-      // While the source rect can be out-of-range when drawing, the resolve rectangle must be
-      // within the bounds of the texture.
-      VkRect2D region = {
-          {scaled_rect.left, scaled_rect.top},
-          {static_cast<u32>(scaled_rect.GetWidth()), static_cast<u32>(scaled_rect.GetHeight())}};
-      region = Util::ClampRect2D(region, FramebufferManager::GetInstance()->GetEFBWidth(),
-                                 FramebufferManager::GetInstance()->GetEFBHeight());
-
-      Vulkan::Texture2D* rtex = FramebufferManager::GetInstance()->ResolveEFBColorTexture(region);
-      rtex->TransitionToLayout(command_buffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    }
-    else
-    {
-      FramebufferManager::GetInstance()->GetEFBColorTexture()->TransitionToLayout(
-          command_buffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    }
-
-    return;
-  }
-
   // Drawing XFB sources, so transition all of them.
   // Don't need the EFB, so leave it as-is.
   for (u32 i = 0; i < xfb_count; i++)
@@ -601,13 +576,6 @@ void Renderer::DrawFrame(VkRenderPass render_pass, const TargetRectangle& target
                          const XFBSourceBase* const* xfb_sources, u32 xfb_count, u32 fb_width,
                          u32 fb_stride, u32 fb_height)
 {
-  if (!g_ActiveConfig.bUseXFB)
-    DrawEFB(render_pass, target_rect, scaled_efb_rect);
-  else if (!g_ActiveConfig.bUseRealXFB)
-    DrawVirtualXFB(render_pass, target_rect, xfb_addr, xfb_sources, xfb_count, fb_width, fb_stride,
-                   fb_height);
-  else
-    DrawRealXFB(render_pass, target_rect, xfb_sources, xfb_count, fb_width, fb_stride, fb_height);
 }
 
 void Renderer::DrawEFB(VkRenderPass render_pass, const TargetRectangle& target_rect,
@@ -1093,8 +1061,6 @@ void Renderer::CheckForConfigChanges()
   int old_aspect_ratio = g_ActiveConfig.iAspectRatio;
   int old_efb_scale = g_ActiveConfig.iEFBScale;
   bool old_force_filtering = g_ActiveConfig.bForceFiltering;
-  bool old_use_xfb = g_ActiveConfig.bUseXFB;
-  bool old_use_realxfb = g_ActiveConfig.bUseRealXFB;
   bool old_vertex_ubershaders = g_ActiveConfig.bForceVertexUberShaders;
   bool old_pixel_ubershaders = g_ActiveConfig.bForcePixelUberShaders;
 
@@ -1108,8 +1074,6 @@ void Renderer::CheckForConfigChanges()
   bool force_texture_filtering_changed = old_force_filtering != g_ActiveConfig.bForceFiltering;
   bool efb_scale_changed = old_efb_scale != g_ActiveConfig.iEFBScale;
   bool aspect_changed = old_aspect_ratio != g_ActiveConfig.iAspectRatio;
-  bool use_xfb_changed = old_use_xfb != g_ActiveConfig.bUseXFB;
-  bool use_realxfb_changed = old_use_realxfb != g_ActiveConfig.bUseRealXFB;
   bool ubershaders_changed = old_vertex_ubershaders != g_ActiveConfig.bForceVertexUberShaders ||
                              old_pixel_ubershaders != g_ActiveConfig.bForcePixelUberShaders;
 
@@ -1117,7 +1081,7 @@ void Renderer::CheckForConfigChanges()
   TextureCache::GetInstance()->OnConfigChanged(g_ActiveConfig);
 
   // Handle settings that can cause the target rectangle to change.
-  if (efb_scale_changed || aspect_changed || use_xfb_changed || use_realxfb_changed)
+  if (efb_scale_changed || aspect_changed)
   {
     if (CalculateTargetSize())
       ResizeEFBTextures();

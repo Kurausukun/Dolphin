@@ -74,8 +74,6 @@ struct VideoConfig final
   bool bWidescreenHack;
   int iAspectRatio;
   bool bCrop;  // Aspect ratio controls.
-  bool bUseXFB;
-  bool bUseRealXFB;
   bool bShaderCache;
 
   // Enhancements
@@ -128,6 +126,7 @@ struct VideoConfig final
 
   bool bEFBEmulateFormatChanges;
   bool bSkipEFBCopyToRam;
+  bool bSkipXFBCopyToRam;
   bool bCopyEFBScaled;
   int iSafeTextureCache_ColorSamples;
   ProjectionHackConfig phack;
@@ -241,8 +240,6 @@ struct VideoConfig final
   } backend_info;
 
   // Utility
-  bool RealXFBEnabled() const { return bUseXFB && bUseRealXFB; }
-  bool VirtualXFBEnabled() const { return bUseXFB && !bUseRealXFB; }
   bool ExclusiveFullscreenEnabled() const
   {
     return backend_info.bSupportsExclusiveFullscreen && !bBorderlessFullscreen;
