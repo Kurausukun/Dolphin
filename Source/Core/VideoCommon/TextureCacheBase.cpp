@@ -47,6 +47,7 @@ std::bitset<8> TextureCacheBase::valid_bind_points;
 TextureCacheBase::TCacheEntry::TCacheEntry(std::unique_ptr<AbstractTexture> tex)
     : texture(std::move(tex))
 {
+  m_flags.set(MAY_HAVE_OVERLAPPING_TEXTURES_FLAG_POS);
 }
 
 TextureCacheBase::TCacheEntry::~TCacheEntry()
@@ -146,7 +147,7 @@ void TextureCacheBase::Cleanup(int _frameCount)
   TexAddrCache::iterator tcend = textures_by_address.end();
   while (iter != tcend)
   {
-    if (iter->second->tmem_only)
+    if (iter->second->IsOnlyInTMem())
     {
       iter = InvalidateTexture(iter);
     }
@@ -157,7 +158,7 @@ void TextureCacheBase::Cleanup(int _frameCount)
     }
     else if (_frameCount > TEXTURE_KILL_THRESHOLD + iter->second->frameCount)
     {
-      if (iter->second->IsEfbCopy())
+      if (iter->second->IsCopy())
       {
         // Only remove EFB copies when they wouldn't be used anymore(changed hash), because EFB
         // copies living on the
@@ -237,12 +238,12 @@ TextureCacheBase::TCacheEntry* TextureCacheBase::ApplyPaletteToEntry(TCacheEntry
   if (!decoded_entry)
     return nullptr;
 
-  decoded_entry->SetGeneralParameters(entry->addr, entry->size_in_bytes, entry->InMemoryFormat(),
-                                      entry->should_force_safe_hashing);
+  decoded_entry->SetGeneralParameters(entry->addr, entry->size_in_bytes, entry->InMemoryFormat());
   decoded_entry->SetDimensions(entry->native_width, entry->native_height, 1);
   decoded_entry->SetHashes(entry->base_hash, entry->hash);
   decoded_entry->frameCount = FRAMECOUNT_INVALID;
-  decoded_entry->info &= ~TCacheEntry::EFB_COPY;
+  decoded_entry->SetShouldForceSafeHashing(false);
+  decoded_entry->SetNotCopy();
 
   ConvertTexture(decoded_entry, entry, palette, static_cast<TlutFormat>(tlutfmt));
   textures_by_address.emplace(entry->addr, decoded_entry);
@@ -296,18 +297,17 @@ TextureCacheBase::DoPartialTextureUpdates(TCacheEntry* entry_to_update, u8* pale
   // If the flag may_have_overlapping_textures is cleared, there are no overlapping EFB copies,
   // which aren't applied already. It is set for new textures, and for the affected range
   // on each EFB copy.
-  if (!entry_to_update->may_have_overlapping_textures)
+  if (!entry_to_update->MayHaveOverlappingTextures())
     return entry_to_update;
-  entry_to_update->may_have_overlapping_textures = false;
+  entry_to_update->SetMayHaveOverlappingTextures(false);
 
-  const bool isPaletteTexture =
-      (entry_to_update->InMemoryFormat() == GX_TF_C4 ||
-       entry_to_update->InMemoryFormat() == GX_TF_C8 ||
-       entry_to_update->InMemoryFormat() == GX_TF_C14X2);
+  const bool isPaletteTexture = (entry_to_update->InMemoryFormat() == GX_TF_C4 ||
+                                 entry_to_update->InMemoryFormat() == GX_TF_C8 ||
+                                 entry_to_update->InMemoryFormat() == GX_TF_C14X2);
 
   // EFB copies are excluded from these updates, until there's an example where a game would
   // benefit from updating. This would require more work to be done.
-  if (entry_to_update->IsEfbCopy())
+  if (entry_to_update->IsCopy())
     return entry_to_update;
 
   u32 block_width = TexDecoder_GetBlockWidthInTexels(entry_to_update->InMemoryFormat());
@@ -321,7 +321,7 @@ TextureCacheBase::DoPartialTextureUpdates(TCacheEntry* entry_to_update, u8* pale
   while (iter.first != iter.second)
   {
     TCacheEntry* entry = iter.first->second;
-    if (entry != entry_to_update && entry->IsEfbCopy() && !entry->tmem_only &&
+    if (entry != entry_to_update && entry->IsCopy() && !entry->IsOnlyInTMem() &&
         entry->references.count(entry_to_update) == 0 &&
         entry->OverlapsMemoryRange(entry_to_update->addr, entry_to_update->size_in_bytes) &&
         entry->memory_stride == numBlocksX * block_size)
@@ -646,15 +646,15 @@ TextureCacheBase::TCacheEntry* TextureCacheBase::GetTexture(u32 address, u32 wid
     TCacheEntry* entry = iter->second;
 
     // Skip entries that are only left in our texture cache for the tmem cache emulation
-    if (entry->tmem_only)
+    if (entry->IsOnlyInTMem())
     {
       ++iter;
       continue;
     }
 
     // Do not load strided EFB copies, they are not meant to be used directly
-    if (entry->IsEfbCopy() && entry->native_width == nativeW && entry->native_height == nativeH &&
-        entry->memory_stride == entry->BytesPerRow())
+    if (entry->IsCopy() && entry->native_width == nativeW && entry->native_height == nativeH &&
+        entry->memory_stride == entry->BytesPerRow() && !entry->MayHaveOverlappingTextures())
     {
       // EFB copies have slightly different rules as EFB copy formats have different
       // meanings from texture formats.
@@ -688,7 +688,7 @@ TextureCacheBase::TCacheEntry* TextureCacheBase::GetTexture(u32 address, u32 wid
     else
     {
       // For normal textures, all texture parameters need to match
-      if (entry->hash == full_hash && entry->FullFormat() == full_format &&
+      if (!entry->IsCopy() &&  entry->hash == full_hash && entry->FullFormat() == full_format &&
           entry->native_levels >= tex_levels && entry->native_width == nativeW &&
           entry->native_height == nativeH)
       {
@@ -704,7 +704,7 @@ TextureCacheBase::TCacheEntry* TextureCacheBase::GetTexture(u32 address, u32 wid
     // Example: Sonic the Fighters (inside Sonic Gems Collection)
     // Skip EFB copies here, so they can be used for partial texture updates
     if (entry->frameCount != FRAMECOUNT_INVALID && entry->frameCount < temp_frameCount &&
-        !entry->IsEfbCopy() && !(isPaletteTexture && entry->base_hash == base_hash))
+        !entry->IsCopy() && !(isPaletteTexture && entry->base_hash == base_hash))
     {
       temp_frameCount = entry->frameCount;
       oldest_entry = iter;
@@ -813,7 +813,6 @@ TextureCacheBase::TCacheEntry* TextureCacheBase::GetTexture(u32 address, u32 wid
 
   if (!hires_tex)
   {
-    entry->info |= TCacheEntry::CUSTOM_TEXTURE;
     if (decode_on_gpu)
     {
       u32 row_stride = bytes_per_block * (expandedWidth / bsw);
@@ -849,9 +848,12 @@ TextureCacheBase::TCacheEntry* TextureCacheBase::GetTexture(u32 address, u32 wid
     entry->textures_by_hash_iter = textures_by_hash.emplace(full_hash, entry);
   }
 
-  entry->SetGeneralParameters(address, texture_size, full_format, texformat == GX_CTF_XFB);
+  entry->SetGeneralParameters(address, texture_size, full_format);
   entry->SetDimensions(nativeW, nativeH, tex_levels);
   entry->SetHashes(base_hash, full_hash);
+  entry->SetShouldForceSafeHashing(texformat == GX_CTF_XFB);
+  entry->SetNotCopy();
+  entry->SetCustomTexture(hires_tex != nullptr);
 
   std::string basename = "";
   if (g_ActiveConfig.bDumpTextures && !hires_tex)
@@ -1367,19 +1369,20 @@ void TextureCacheBase::CopyRenderTargetToTexture(u32 dstAddr, unsigned int dstFo
   // Unless our efb copy has a weird stride, then we mark them to check for partial texture updates.
   // TODO: This also invalidates partial overlaps, which we currently don't have a better way
   //       of dealing with.
-  bool invalidate_textures = dstStride == bytes_per_row || !copy_to_vram;
   auto iter = FindOverlappingTextures(dstAddr, covered_range);
   while (iter.first != iter.second)
   {
     TCacheEntry* entry = iter.first->second;
     if (entry->OverlapsMemoryRange(dstAddr, covered_range))
     {
-      if (invalidate_textures)
+      u32 overlap_range = std::min(entry->addr + entry->size_in_bytes, dstAddr + covered_range) -
+                          std::max(entry->addr, dstAddr);
+      if (entry->IsCopy() && overlap_range == entry->size_in_bytes)
       {
         iter.first = InvalidateTexture(iter.first);
         continue;
       }
-      entry->may_have_overlapping_textures = true;
+      entry->SetMayHaveOverlappingTextures(true);
     }
     ++iter.first;
   }
@@ -1397,11 +1400,21 @@ void TextureCacheBase::CopyRenderTargetToTexture(u32 dstAddr, unsigned int dstFo
 
     if (entry)
     {
-      entry->SetGeneralParameters(dstAddr, 0, baseFormat, is_xfb_copy);
+      entry->SetGeneralParameters(dstAddr, 0, baseFormat);
       entry->SetDimensions(tex_w, tex_h, 1);
 
       entry->frameCount = FRAMECOUNT_INVALID;
-      entry->SetEfbCopy(dstStride);
+      if (is_xfb_copy)
+      {
+        entry->SetShouldForceSafeHashing(is_xfb_copy);
+        entry->SetXfbCopy(dstStride);
+      }
+      else
+      {
+        entry->SetEfbCopy(dstStride);
+      }
+      entry->SetMayHaveOverlappingTextures(false);
+      entry->SetCustomTexture(false);
 
       CopyEFBToCacheEntry(entry, is_depth_copy, srcRect, scaleByHalf, cbufid, colmat);
 
@@ -1534,7 +1547,7 @@ TextureCacheBase::InvalidateTexture(TexAddrCache::iterator iter)
     // Spyro: A Hero's Tail is known for using such overwritten textures.
     if (bound_textures[i] == entry && IsValidBindPoint(static_cast<u32>(i)))
     {
-      bound_textures[i]->tmem_only = true;
+      bound_textures[i]->SetTMemOnly(true);
       return ++iter;
     }
   }
@@ -1569,9 +1582,9 @@ u32 TextureCacheBase::TCacheEntry::NumBlocksY() const
   return actualHeight / blockH;
 }
 
-void TextureCacheBase::TCacheEntry::SetEfbCopy(u32 stride)
+void TextureCacheBase::TCacheEntry::SetXfbCopy(u32 stride)
 {
-  info |= EFB_COPY;
+  m_flags.set(XFB_COPY_FLAG_POS);
   memory_stride = stride;
 
   _assert_msg_(VIDEO, memory_stride >= BytesPerRow(), "Memory stride is too small");
@@ -1579,14 +1592,45 @@ void TextureCacheBase::TCacheEntry::SetEfbCopy(u32 stride)
   size_in_bytes = memory_stride * NumBlocksY();
 }
 
+void TextureCacheBase::TCacheEntry::SetNotCopy()
+{
+  m_flags.reset(XFB_COPY_FLAG_POS);
+  m_flags.reset(EFB_COPY_FLAG_POS);
+}
+
+void TextureCacheBase::TCacheEntry::SetEfbCopy(u32 stride)
+{
+  m_flags.set(EFB_COPY_FLAG_POS);
+  memory_stride = stride;
+
+  _assert_msg_(VIDEO, memory_stride >= BytesPerRow(), "Memory stride is too small");
+
+  size_in_bytes = memory_stride * NumBlocksY();
+}
+
+void TextureCacheBase::TCacheEntry::SetCustomTexture(bool is_custom)
+{
+  m_flags.set(CUSTOM_TEXTURE_FLAG_POS, is_custom);
+}
+
+void TextureCacheBase::TCacheEntry::SetMayHaveOverlappingTextures(bool may_overlap)
+{
+  m_flags.set(MAY_HAVE_OVERLAPPING_TEXTURES_FLAG_POS, may_overlap);
+}
+
+void TextureCacheBase::TCacheEntry::SetTMemOnly(bool tmem_only)
+{
+  m_flags.set(TMEM_ONLY_FLAG_POS, tmem_only);
+}
+
+void TextureCacheBase::TCacheEntry::SetShouldForceSafeHashing(bool should_force)
+{
+  m_flags.set(SHOULD_FORCE_SAFE_HASHING_FLAG_POS, should_force);
+}
+
 int TextureCacheBase::TCacheEntry::HashSampleSize() const
 {
-  if (should_force_safe_hashing)
-  {
-    return 0;
-  }
-
-  return g_ActiveConfig.iSafeTextureCache_ColorSamples;
+  return ShouldForceSafeHashing() ? 0 : g_ActiveConfig.iSafeTextureCache_ColorSamples;
 }
 
 u64 TextureCacheBase::TCacheEntry::CalculateHash() const

@@ -34,13 +34,8 @@ public:
     u32 addr;
     u32 size_in_bytes;
     u64 base_hash;
-    u64 hash;    // for paletted textures, hash = base_hash ^ palette_hash
+    u64 hash;  // for paletted textures, hash = base_hash ^ palette_hash
     u32 memory_stride;
-    u32 info = 0;
-    bool may_have_overlapping_textures = true;
-    bool tmem_only = false;  // indicates that this texture only exists in the tmem cache
-    bool should_force_safe_hashing = false;  // for XFB
-    u64 cache_id;
 
     unsigned int native_width,
         native_height;  // Texture dimensions from the GameCube's point of view
@@ -58,21 +53,15 @@ public:
     //   * partially updated textures which refer to this efb copy
     std::unordered_set<TCacheEntry*> references;
 
-    enum Flags {
-      CUSTOM_TEXTURE = 1 << 16,
-      EFB_COPY = 1 << 17,
-    };
-
     explicit TCacheEntry(std::unique_ptr<AbstractTexture> tex);
 
     ~TCacheEntry();
 
-    void SetGeneralParameters(u32 _addr, u32 _size, u32 _format, bool force_safe_hashing)
+    void SetGeneralParameters(u32 _addr, u32 _size, u32 _format)
     {
       addr = _addr;
       size_in_bytes = _size;
-      info = (info & 0xffff0000) | (_format & 0xffff);
-      should_force_safe_hashing = force_safe_hashing;
+      format = _format;
     }
 
     void SetDimensions(unsigned int _native_width, unsigned int _native_height,
@@ -98,12 +87,39 @@ public:
       other_entry->references.emplace(this);
     }
 
+    enum FlagPos
+    {
+      EFB_COPY_FLAG_POS = 0,
+      CUSTOM_TEXTURE_FLAG_POS = 1,
+      MAY_HAVE_OVERLAPPING_TEXTURES_FLAG_POS = 2,
+      TMEM_ONLY_FLAG_POS = 3,  // indicates that this texture only exists in the tmem cache
+      SHOULD_FORCE_SAFE_HASHING_FLAG_POS = 4,
+      XFB_COPY_FLAG_POS = 5,
+    };
+
+    void SetXfbCopy(u32 stride);
     void SetEfbCopy(u32 stride);
+    void SetNotCopy();
+    void SetCustomTexture(bool is_custom);
+    void SetMayHaveOverlappingTextures(bool has_overlap);
+    void SetTMemOnly(bool tmem_only);
+    void SetShouldForceSafeHashing(bool should_force);
 
     bool OverlapsMemoryRange(u32 range_address, u32 range_size) const;
 
-    bool IsEfbCopy() const { return (info & EFB_COPY) != 0; }
-    bool IsCustomTexture() const { return (info & CUSTOM_TEXTURE) != 0; }
+    bool IsCopy() const { return IsXfbCopy() || IsEfbCopy(); }
+    bool IsXfbCopy() const { return m_flags.test(XFB_COPY_FLAG_POS); }
+    bool IsEfbCopy() const { return m_flags.test(EFB_COPY_FLAG_POS); }
+    bool IsCustomTexture() const { return m_flags.test(CUSTOM_TEXTURE_FLAG_POS); }
+    bool MayHaveOverlappingTextures() const
+    {
+      return m_flags.test(MAY_HAVE_OVERLAPPING_TEXTURES_FLAG_POS);
+    }
+    bool IsOnlyInTMem() const { return m_flags.test(TMEM_ONLY_FLAG_POS); }
+    bool ShouldForceSafeHashing() const
+    {
+      return m_flags.test(SHOULD_FORCE_SAFE_HASHING_FLAG_POS);
+    }
     u32 NumBlocksY() const;
     u32 BytesPerRow() const;
 
@@ -114,8 +130,12 @@ public:
     u32 GetHeight() const { return texture->GetConfig().height; }
     u32 GetNumLevels() const { return texture->GetConfig().levels; }
     u32 GetNumLayers() const { return texture->GetConfig().layers; }
-    AbstractTextureFormat GetFormat() const { return texture->GetConfig().format; }    u32 InMemoryFormat() const { return info & 0xff; }
-    u32 FullFormat() const { return info & 0xffff; }  // includes tlut format
+    AbstractTextureFormat GetFormat() const { return texture->GetConfig().format; }
+    u32 InMemoryFormat() const { return format & 0xff; }
+    u32 FullFormat() const { return format; }
+  private:
+    std::bitset<6> m_flags;
+    u32 format;  // bits 0-3 will contain the in-memory format.
   };
 
   virtual ~TextureCacheBase();  // needs virtual for DX11 dtor
