@@ -66,10 +66,12 @@ std::unique_ptr<AbstractTexture> TextureCache::CreateTexture(const TextureConfig
 
 void TextureCache::CopyEFB(u8* dst, const EFBCopyFormat& format, u32 native_width,
                            u32 bytes_per_row, u32 num_blocks_y, u32 memory_stride,
-                           bool is_depth_copy, const EFBRectangle& src_rect, bool scale_by_half)
+                           bool is_depth_copy, const EFBRectangle& src_rect, bool scale_by_half,
+                           float y_scale)
 {
   TextureConverter::EncodeToRamFromTexture(dst, format, native_width, bytes_per_row, num_blocks_y,
-                                           memory_stride, is_depth_copy, src_rect, scale_by_half);
+                                           memory_stride, is_depth_copy, src_rect, scale_by_half,
+                                           y_scale);
 }
 
 TextureCache::TextureCache()

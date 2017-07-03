@@ -40,7 +40,7 @@ public:
   void EncodeTextureToMemory(VkImageView src_texture, u8* dest_ptr, const EFBCopyFormat& format,
                              u32 native_width, u32 bytes_per_row, u32 num_blocks_y,
                              u32 memory_stride, bool is_depth_copy, const EFBRectangle& src_rect,
-                             bool scale_by_half);
+                             bool scale_by_half, float y_scale);
 
   // Encodes texture to guest memory in XFB (YUYV) format.
   void EncodeTextureToMemoryYUYV(void* dst_ptr, u32 dst_width, u32 dst_stride, u32 dst_height,

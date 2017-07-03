@@ -36,6 +36,7 @@ public:
     u64 base_hash;
     u64 hash;  // for paletted textures, hash = base_hash ^ palette_hash
     u32 memory_stride;
+    float y_scale = 1.0f;
 
     unsigned int native_width,
         native_height;  // Texture dimensions from the GameCube's point of view
@@ -150,7 +151,7 @@ public:
 
   virtual void CopyEFB(u8* dst, const EFBCopyFormat& format, u32 native_width, u32 bytes_per_row,
                        u32 num_blocks_y, u32 memory_stride, bool is_depth_copy,
-                       const EFBRectangle& src_rect, bool scale_by_half) = 0;
+                       const EFBRectangle& src_rect, bool scale_by_half, float y_scale) = 0;
 
   virtual bool CompileShaders() = 0;
   virtual void DeleteShaders() = 0;
@@ -167,7 +168,7 @@ public:
   virtual void BindTextures();
   void CopyRenderTargetToTexture(u32 dstAddr, unsigned int dstFormat, u32 dstStride,
                                  bool is_depth_copy, const EFBRectangle& srcRect, bool isIntensity,
-                                 bool scaleByHalf);
+                                 bool scaleByHalf, float y_scale);
 
   virtual void ConvertTexture(TCacheEntry* entry, TCacheEntry* unconverted, void* palette,
                               TlutFormat format) = 0;
@@ -188,6 +189,8 @@ public:
                                   const u8* palette, TlutFormat palette_format)
   {
   }
+
+  void ScaleTextureCacheEntryTo(TCacheEntry* entry, u32 new_width, u32 new_height);
 
 protected:
   TextureCacheBase();
@@ -214,7 +217,6 @@ private:
 
   TCacheEntry* ApplyPaletteToEntry(TCacheEntry* entry, u8* palette, u32 tlutfmt);
 
-  void ScaleTextureCacheEntryTo(TCacheEntry* entry, u32 new_width, u32 new_height);
   TCacheEntry* DoPartialTextureUpdates(TCacheEntry* entry_to_update, u8* palette, u32 tlutfmt);
 
   void DumpTexture(TCacheEntry* entry, std::string basename, unsigned int level);
