@@ -31,6 +31,8 @@
 #include "VideoCommon/FPSCounter.h"
 #include "VideoCommon/VideoCommon.h"
 
+class AbstractRawTexture;
+class AbstractTexture;
 class PostProcessingShaderImplementation;
 enum class EFBAccessType;
 
@@ -132,8 +134,7 @@ public:
   // Finish up the current frame, print some stats
   void Swap(u32 xfbAddr, u32 fbWidth, u32 fbStride, u32 fbHeight, const EFBRectangle& rc, u64 ticks,
             float Gamma = 1.0f);
-  virtual void SwapImpl(u32 xfbAddr, u32 fbWidth, u32 fbStride, u32 fbHeight,
-                        const EFBRectangle& rc, u64 ticks, float Gamma = 1.0f) = 0;
+  virtual void SwapImpl(AbstractTexture* texture, const EFBRectangle& rc, u64 ticks, float Gamma = 1.0f) = 0;
 
   PEControl::PixelFormat GetPrevPixelFormat() const { return m_prev_efb_format; }
   void StorePixelFormat(PEControl::PixelFormat new_format) { m_prev_efb_format = new_format; }
@@ -151,11 +152,6 @@ protected:
 
   void CheckFifoRecording();
   void RecordVideoMemory();
-
-  bool IsFrameDumping();
-  void DumpFrameData(const u8* data, int w, int h, int stride, const AVIDump::Frame& state,
-                     bool swap_upside_down = false);
-  void FinishFrameData();
 
   Common::Flag m_screenshot_request;
   Common::Event m_screenshot_completed;
@@ -209,13 +205,15 @@ private:
   bool m_frame_dump_frame_running = false;
   struct FrameDumpConfig
   {
+    AbstractTexture* texture;
     const u8* data;
     int width;
     int height;
     int stride;
-    bool upside_down;
     AVIDump::Frame state;
   } m_frame_dump_config;
+
+  AbstractTexture * m_last_xfb_texture;
 
   // NOTE: The methods below are called on the framedumping thread.
   bool StartFrameDumpToAVI(const FrameDumpConfig& config);
@@ -224,6 +222,10 @@ private:
   std::string GetFrameDumpNextImageFileName() const;
   bool StartFrameDumpToImage(const FrameDumpConfig& config);
   void DumpFrameToImage(const FrameDumpConfig& config);
+
+  bool IsFrameDumping();
+  void DumpFrameData(const u8* data, int w, int h, int stride, const AVIDump::Frame& state);
+  void FinishFrameData();
 };
 
 extern std::unique_ptr<Renderer> g_renderer;

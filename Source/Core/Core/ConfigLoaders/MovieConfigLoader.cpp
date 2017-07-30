@@ -23,7 +23,6 @@ void MovieConfigLayerLoader::Load(Config::Layer* config_layer)
 {
   Config::Section* core = config_layer->GetOrCreateSection(Config::System::Main, "Core");
   Config::Section* display = config_layer->GetOrCreateSection(Config::System::Main, "Display");
-  Config::Section* video_settings = Config::GetOrCreateSection(Config::System::GFX, "Settings");
   Config::Section* video_hacks = Config::GetOrCreateSection(Config::System::GFX, "Hacks");
 
   core->Set("SkipIdle", m_header->bSkipIdle);
@@ -36,10 +35,9 @@ void MovieConfigLayerLoader::Load(Config::Layer* config_layer)
   display->Set("ProgressiveScan", m_header->bProgressive);
   display->Set("PAL60", m_header->bPAL60);
 
-  video_settings->Set("UseXFB", m_header->bUseXFB);
-  video_settings->Set("UseRealXFB", m_header->bUseRealXFB);
   video_hacks->Set("EFBAccessEnable", m_header->bEFBAccessEnable);
   video_hacks->Set("EFBToTextureEnable", m_header->bSkipEFBCopyToRam);
+  video_hacks->Set("XFBToTextureEnable", m_header->bSkipXFBCopyToRam);
   video_hacks->Set("EFBEmulateFormatChanges", m_header->bEFBEmulateFormatChanges);
 }
 
@@ -47,7 +45,6 @@ void MovieConfigLayerLoader::Save(Config::Layer* config_layer)
 {
   Config::Section* core = config_layer->GetOrCreateSection(Config::System::Main, "Core");
   Config::Section* display = config_layer->GetOrCreateSection(Config::System::Main, "Display");
-  Config::Section* video_settings = Config::GetOrCreateSection(Config::System::GFX, "Settings");
   Config::Section* video_hacks = Config::GetOrCreateSection(Config::System::GFX, "Hacks");
 
   std::string video_backend;
@@ -63,10 +60,9 @@ void MovieConfigLayerLoader::Save(Config::Layer* config_layer)
   display->Get("ProgressiveScan", &m_header->bProgressive);
   display->Get("PAL60", &m_header->bPAL60);
 
-  video_settings->Get("UseXFB", &m_header->bUseXFB);
-  video_settings->Get("UseRealXFB", &m_header->bUseRealXFB);
   video_hacks->Get("EFBAccessEnable", &m_header->bEFBAccessEnable);
   video_hacks->Get("EFBToTextureEnable", &m_header->bSkipEFBCopyToRam);
+  video_hacks->Get("XFBToTextureEnable", &m_header->bSkipXFBCopyToRam);
   video_hacks->Get("EFBEmulateFormatChanges", &m_header->bEFBEmulateFormatChanges);
 
   // This never used the regular config

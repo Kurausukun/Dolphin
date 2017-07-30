@@ -73,6 +73,8 @@ u16 GetEncodedSampleCount(u32 format)
     return 4;
   case GX_CTF_Z16L:
     return 2;
+  case GX_CTF_XFB:
+    return 2;
   default:
     return 1;
   }
@@ -85,9 +87,12 @@ static void WriteSwizzler(char*& p, u32 format, APIType ApiType)
   // left, top, of source rectangle within source texture
   // width of the destination rectangle, scale_factor (1 or 2)
   if (ApiType == APIType::Vulkan)
-    WRITE(p, "layout(std140, push_constant) uniform PCBlock { int4 position; } PC;\n");
+    WRITE(p, "layout(std140, push_constant) uniform PCBlock { int4 position; float y_scale; } PC;\n");
   else
+  {
     WRITE(p, "uniform int4 position;\n");
+    WRITE(p, "uniform float y_scale;\n");
+  }
 
   // Alpha channel in the copy is set to 1 the EFB format does not have an alpha channel.
   WRITE(p, "float4 RGBA8ToRGB8(float4 src)\n");
@@ -132,7 +137,8 @@ static void WriteSwizzler(char*& p, u32 format, APIType ApiType)
     WRITE(p, "{\n"
              "  int2 sampleUv;\n"
              "  int2 uv1 = int2(gl_FragCoord.xy);\n"
-             "  int4 position = PC.position;\n");
+             "  int4 position = PC.position;\n"
+             "  float y_scale = PC.y_scale;\n");
   }
   else  // D3D
   {
@@ -171,6 +177,7 @@ static void WriteSwizzler(char*& p, u32 format, APIType ApiType)
                                               // pixel)
   WRITE(p, "  uv0 += float2(position.xy);\n");                    // move to copied rect
   WRITE(p, "  uv0 /= float2(%d, %d);\n", EFB_WIDTH, EFB_HEIGHT);  // normalize to [0:1]
+  WRITE(p, "  uv0 /= float2(1, y_scale);\n");                 // apply the y scaling
   if (ApiType == APIType::OpenGL)                                 // ogl has to flip up and down
   {
     WRITE(p, "  uv0.y = 1.0-uv0.y;\n");
@@ -681,6 +688,28 @@ static void WriteZ24Encoder(char*& p, APIType ApiType, const EFBCopyFormat& form
   WriteEncoderEnd(p);
 }
 
+static void WriteXFBEncoder(char*& p, APIType ApiType, const EFBCopyFormat& format)
+{
+  WriteSwizzler(p, GX_CTF_XFB, ApiType);
+  
+  WRITE(p, "  float3 y_const = float3(0.257, 0.504, 0.098);\n");
+  WRITE(p, "  float3 u_const = float3(-0.148, -0.291, 0.439);\n");
+  WRITE(p, "  float3 v_const = float3(0.439, -0.368, -0.071);\n");
+  WRITE(p, "  float3 color0;\n");
+  WRITE(p, "  float3 color1;\n");
+  
+  WriteSampleColor(p, "rgb", "color0", 0, ApiType, format, false);
+  WriteSampleColor(p, "rgb", "color1", 1, ApiType, format, false);
+  WRITE(p, "  float3 average = (color0 + color1) * 0.5;\n");
+  
+  WRITE(p, "  ocol0.b = dot(color0,  y_const) + 0.0625;\n");
+  WRITE(p, "  ocol0.g = dot(average, u_const) + 0.5;\n");
+  WRITE(p, "  ocol0.r = dot(color1,  y_const) + 0.0625;\n");
+  WRITE(p, "  ocol0.a = dot(average, v_const) + 0.5;\n");
+  
+  WriteEncoderEnd(p);
+}
+
 const char* GenerateEncodingShader(const EFBCopyFormat& format, APIType api_type)
 {
   text[sizeof(text) - 1] = 0x7C;  // canary
@@ -759,6 +788,9 @@ const char* GenerateEncodingShader(const EFBCopyFormat& format, APIType api_type
     break;
   case GX_CTF_Z16L:
     WriteZ16LEncoder(p, api_type, format);
+    break;
+  case GX_CTF_XFB:
+    WriteXFBEncoder(p, api_type, format);
     break;
   default:
     PanicAlert("Unknown texture copy format: 0x%x\n", static_cast<u32>(format.copy_format));

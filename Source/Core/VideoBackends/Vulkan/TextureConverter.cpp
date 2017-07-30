@@ -32,6 +32,14 @@
 
 namespace Vulkan
 {
+  namespace
+  {
+    struct EFBEncodeParams
+    {
+      s32 position_uniform[4];
+      float y_scale;
+    };
+  }
 TextureConverter::TextureConverter()
 {
 }
@@ -150,7 +158,7 @@ TextureConverter::GetCommandBufferForTextureConversion(const TextureCache::TCach
   // EFB copies can be used as paletted textures as well. For these, we can't assume them to be
   // contain the correct data before the frame begins (when the init command buffer is executed),
   // so we must convert them at the appropriate time, during the drawing command buffer.
-  if (src_entry->IsEfbCopy())
+  if (src_entry->IsCopy())
   {
     StateTracker::GetInstance()->EndRenderPass();
     StateTracker::GetInstance()->SetPendingRebind();
@@ -182,7 +190,7 @@ void TextureConverter::ConvertTexture(TextureCacheBase::TCacheEntry* dst_entry,
   _assert_(destination_texture->GetConfig().rendertarget);
 
   // We want to align to 2 bytes (R16) or the device's texel buffer alignment, whichever is greater.
-  size_t palette_size = (src_entry->format & 0xF) == GX_TF_I4 ? 32 : 512;
+  size_t palette_size = (src_entry->InMemoryFormat()) == GX_TF_I4 ? 32 : 512;
   if (!ReserveTexelBufferStorage(palette_size, sizeof(u16)))
     return;
 
@@ -207,7 +215,7 @@ void TextureConverter::ConvertTexture(TextureCacheBase::TCacheEntry* dst_entry,
   draw.BeginRenderPass(destination_texture->GetFramebuffer(), region);
 
   PSUniformBlock uniforms = {};
-  uniforms.multiplier = (src_entry->format & 0xF) == GX_TF_I4 ? 15.0f : 255.0f;
+  uniforms.multiplier = (src_entry->InMemoryFormat()) == GX_TF_I4 ? 15.0f : 255.0f;
   uniforms.texel_buffer_offset = static_cast<int>(palette_offset / sizeof(u16));
   draw.SetPushConstants(&uniforms, sizeof(uniforms));
   draw.SetPSSampler(0, source_texture->GetRawTexIdentifier()->GetView(),
@@ -222,7 +230,7 @@ void TextureConverter::EncodeTextureToMemory(VkImageView src_texture, u8* dest_p
                                              const EFBCopyFormat& format, u32 native_width,
                                              u32 bytes_per_row, u32 num_blocks_y, u32 memory_stride,
                                              bool is_depth_copy, const EFBRectangle& src_rect,
-                                             bool scale_by_half)
+                                             bool scale_by_half, float y_scale)
 {
   VkShaderModule shader = GetEncodingShader(format);
   if (shader == VK_NULL_HANDLE)
@@ -244,14 +252,19 @@ void TextureConverter::EncodeTextureToMemory(VkImageView src_texture, u8* dest_p
                          VK_NULL_HANDLE, shader);
 
   // Uniform - int4 of left,top,native_width,scale
-  s32 position_uniform[4] = {src_rect.left, src_rect.top, static_cast<s32>(native_width),
-                             scale_by_half ? 2 : 1};
-  draw.SetPushConstants(position_uniform, sizeof(position_uniform));
+  EFBEncodeParams encoder_params;
+  encoder_params.position_uniform[0] = src_rect.left;
+  encoder_params.position_uniform[1] = src_rect.top;
+  encoder_params.position_uniform[2] = static_cast<s32>(native_width);
+  encoder_params.position_uniform[3] = scale_by_half ? 2 : 1;
+  encoder_params.y_scale = y_scale;
+  draw.SetPushConstants(&encoder_params, sizeof(encoder_params));
 
   // We also linear filtering for both box filtering and downsampling higher resolutions to 1x
   // TODO: This only produces perfect downsampling for 1.5x and 2x IR, other resolution will
   //       need more complex down filtering to average all pixels and produce the correct result.
-  bool linear_filter = (scale_by_half && !is_depth_copy) || g_ActiveConfig.iEFBScale != SCALE_1X;
+  bool linear_filter = (scale_by_half && !is_depth_copy) || g_ActiveConfig.iEFBScale != SCALE_1X ||
+                       y_scale > 1.0f;
   draw.SetPSSampler(0, src_texture, linear_filter ? g_object_cache->GetLinearSampler() :
                                                     g_object_cache->GetPointSampler());
 
